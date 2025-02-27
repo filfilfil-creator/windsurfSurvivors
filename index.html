@@ -17,13 +17,13 @@
             color: white;
             font-family: Arial, sans-serif;
             touch-action: none;
+            overflow: hidden; /* Prevent scrollbars */
         }
         #game-container {
-            width: 100%;
-            max-width: 800px;
-            height: 100vh;
-            max-height: 600px;
+            width: 800px; /* Fixed width */
+            height: 600px; /* Fixed height */
             position: relative;
+            margin: 0 auto; /* Center horizontally */
         }
         #game-ui {
             position: absolute;
@@ -70,6 +70,8 @@
         let enemies;
         let projectiles;
         let cursors;
+        let wasdKeys;
+        let keyboardLayout = 'qwerty'; // Default to QWERTY
         let playerHealth = 100;
         let maxPlayerHealth = 100;
         let healthBar;
@@ -150,6 +152,9 @@
             // Record game start time
             gameStartTime = this.time.now;
             
+            // Detect keyboard layout
+            detectKeyboardLayout.call(this);
+            
             // Create player text - smaller size
             player = this.add.text(400, 300, 'HERO', { 
                 fontFamily: 'Arial', 
@@ -215,6 +220,9 @@
             // Set up cursor keys for movement
             cursors = this.input.keyboard.createCursorKeys();
             
+            // Set up WASD keys for movement based on detected layout
+            updateWASDKeys.call(this);
+            
             // Set up touch controls
             this.input.on('pointerdown', (pointer) => {
                 touchInput.isActive = true;
@@ -256,6 +264,9 @@
                 { fontFamily: 'Arial', fontSize: '12px', color: '#cccccc' }
             ).setOrigin(0.5);
             
+            // Update controls text based on detected keyboard layout
+            updateControlsText.call(this);
+            
             // Kill count text (on-screen)
             killCountText = this.add.text(
                 400, 65, 
@@ -295,15 +306,15 @@
             // Player movement with keyboard
             player.body.setVelocity(0);
             
-            if (cursors.left.isDown) {
+            if (cursors.left.isDown || wasdKeys.left.isDown) {
                 player.body.setVelocityX(-playerSpeed);
-            } else if (cursors.right.isDown) {
+            } else if (cursors.right.isDown || wasdKeys.right.isDown) {
                 player.body.setVelocityX(playerSpeed);
             }
             
-            if (cursors.up.isDown) {
+            if (cursors.up.isDown || wasdKeys.up.isDown) {
                 player.body.setVelocityY(-playerSpeed);
-            } else if (cursors.down.isDown) {
+            } else if (cursors.down.isDown || wasdKeys.down.isDown) {
                 player.body.setVelocityY(playerSpeed);
             }
             
@@ -996,6 +1007,79 @@
             this.projectileFirer.paused = false;
         }
         
+        function detectKeyboardLayout() {
+            // Detect keyboard layout
+            try {
+                // Check for navigator.keyboard API support (modern browsers)
+                if (navigator.keyboard && navigator.keyboard.getLayoutMap) {
+                    navigator.keyboard.getLayoutMap()
+                        .then(keyboardLayoutMap => {
+                            // Check for AZERTY layout by looking at the key for 'KeyQ'
+                            const qKey = keyboardLayoutMap.get('KeyQ');
+                            if (qKey === 'a' || qKey === 'A') {
+                                // AZERTY detected
+                                keyboardLayout = 'azerty';
+                                updateWASDKeys.call(this);
+                            }
+                        })
+                        .catch(error => {
+                            console.log('Error detecting keyboard layout:', error);
+                        });
+                } else {
+                    // Fallback method: check browser language
+                    const language = navigator.language || navigator.userLanguage;
+                    if (language && (language.startsWith('fr') || language.startsWith('be'))) {
+                        // French or Belgian language often uses AZERTY
+                        keyboardLayout = 'azerty';
+                        updateWASDKeys.call(this);
+                    }
+                }
+            } catch (error) {
+                console.log('Error in keyboard layout detection:', error);
+            }
+            
+            // Update the controls text
+            updateControlsText.call(this);
+        }
+        
+        function updateWASDKeys() {
+            // Update keys based on detected layout
+            if (keyboardLayout === 'azerty') {
+                // AZERTY layout uses ZQSD for movement
+                wasdKeys = this.input.keyboard.addKeys({
+                    up: Phaser.Input.Keyboard.KeyCodes.Z,
+                    down: Phaser.Input.Keyboard.KeyCodes.S,
+                    left: Phaser.Input.Keyboard.KeyCodes.Q,
+                    right: Phaser.Input.Keyboard.KeyCodes.D
+                });
+            } else {
+                // QWERTY layout uses WASD for movement
+                wasdKeys = this.input.keyboard.addKeys({
+                    up: Phaser.Input.Keyboard.KeyCodes.W,
+                    down: Phaser.Input.Keyboard.KeyCodes.S,
+                    left: Phaser.Input.Keyboard.KeyCodes.A,
+                    right: Phaser.Input.Keyboard.KeyCodes.D
+                });
+            }
+        }
+        
+        function updateControlsText() {
+            // Update the controls text based on the detected keyboard layout
+            let controlsInfo = 'Controls: Arrow Keys';
+            
+            if (keyboardLayout === 'azerty') {
+                controlsInfo += ' or ZQSD';
+            } else {
+                controlsInfo += ' or WASD';
+            }
+            
+            controlsInfo += ' or Touch/Click to move';
+            
+            if (this.controlsText) {
+                this.controlsText.setText(controlsInfo);
+            }
+        }
+        
         function restartGame() {
             // Reset game state
             playerHealth = 100;
@@ -1026,9 +1110,6 @@
             doubleShotUnlocked = false;
             slowShotChance = 0;
             slowShotUnlocked = false;
-            
-            // Update player stats text
-            updatePlayerStatsText.call(this);
             
             // Reset hero exp system
             heroExp = 0;
@@ -1074,270 +1155,9 @@
                 callbackScope: this,
                 loop: true
             });
-        }
-    </script>
-</body>
-</html>
-
             
-            // Hide game over text and restart button
-            gameOverText.setVisible(false);
-            restartButton.setVisible(false);
-            
-            // Reset player position
-            player.x = 400;
-            player.y = 300;
-            player.setAlpha(1);
-            
-            // Clear existing enemies and projectiles
-            enemies.clear(true, true);
-            projectiles.clear(true, true);
-            
-            // Resume physics
-            this.physics.resume();
-            
-            // Create new enemy spawner
-            this.enemySpawner = this.time.addEvent({
-                delay: baseSpawnDelay,
-                callback: spawnEnemy,
-                callbackScope: this,
-                loop: true
-            });
-            
-            // Create new projectile firer
-            this.projectileFirer = this.time.addEvent({
-                delay: shootingDelay / shootingRateMultiplier,
-                callback: fireProjectile,
-                callbackScope: this,
-                loop: true
-            });
-            
-            // Reset difficulty scaling
-            baseEnemyHealth = 1;
-            currentEnemyHealth = 1;
-            gameStartTime = this.time.now;
-        }
-    </script>
-</body>
-</html>
-
-                score++;
-                killCountText.setText(`Enemies killed: ${score}`);
-                
-                // Add experience
-                heroExp++;
-                updateExpBar.call(this);
-                
-                // Check for level up
-                if (heroExp >= expToNextLevel) {
-                    heroLevel++;
-                    heroLevelText.setText(`Hero Level: ${heroLevel}`);
-                    
-                    // Reset exp and increase next level requirement
-                    heroExp = 0;
-                    expToNextLevel *= 2;
-                    updateExpBar.call(this);
-                    
-                    // Show level up cards
-                    showLevelUpCards.call(this);
-                }
-            } else {
-                // Flash the enemy when hit
-                this.tweens.add({
-                    targets: enemy,
-                    alpha: 0.5,
-                    duration: 50,
-                    yoyo: true,
-                    repeat: 1
-                });
-            }
-        }
-        
-        function createOrbitalProjectile() {
-            // Remove existing orbital projectile if it exists
-            if (orbitalProjectile) {
-                orbitalProjectile.destroy();
-            }
-            
-            // Create a new orbital projectile
-            orbitalProjectile = this.add.text(
-                player.x + orbitalDistance, 
-                player.y, 
-                '★', 
-                { 
-                    fontFamily: 'Arial', 
-                    fontSize: `${projectileSize}px`, 
-                    color: '#ffaa00',
-                    fontStyle: 'bold'
-                }
-            ).setOrigin(0.5);
-            
-            // Add physics to the orbital projectile
-            this.physics.world.enable(orbitalProjectile);
-            
-            // Set the initial angle
-            orbitalAngle = 0;
-            
-            // Add visual effect when creating the orbital
-            this.tweens.add({
-                targets: orbitalProjectile,
-                scale: { from: 0.5, to: 1 },
-                alpha: { from: 0.2, to: 1 },
-                duration: 500,
-                ease: 'Cubic.out'
-            });
-            
-            // Set up the timer for the next orbital projectile
-            if (orbitalProjectileTimer) {
-                orbitalProjectileTimer.remove();
-            }
-            
-            orbitalProjectileTimer = this.time.delayedCall(
-                orbitalProjectileCooldown * orbitalProjectileCooldownReduction,
-                createOrbitalProjectile,
-                [],
-                this
-            );
-            
-            // Double shot chance - create a second orbital on the opposite side
-            if (doubleShotUnlocked && Math.random() < doubleShotChance) {
-                // Create a second orbital projectile on the opposite side
-                const secondOrbital = this.add.text(
-                    player.x - orbitalDistance, 
-                    player.y, 
-                    '★', 
-                    { 
-                        fontFamily: 'Arial', 
-                        fontSize: `${projectileSize}px`, 
-                        color: '#ffaa00',
-                        fontStyle: 'bold'
-                    }
-                ).setOrigin(0.5);
-                
-                // Add physics to the second orbital
-                this.physics.world.enable(secondOrbital);
-                
-                // Set it to be destroyed when the main orbital is destroyed
-                orbitalProjectile.secondOrbital = secondOrbital;
-                
-                // Add visual effect
-                this.tweens.add({
-                    targets: secondOrbital,
-                    scale: { from: 0.5, to: 1 },
-                    alpha: { from: 0.2, to: 1 },
-                    duration: 500,
-                    ease: 'Cubic.out'
-                });
-            }
-        }
-        
-        function restartGame() {
-            // Reset game state
-            gameOver = false;
-            gamePaused = false;
-            
-            // Reset player health and score
-            playerHealth = 100;
-            maxPlayerHealth = 100;
-            score = 0;
-            level = 1;
-            
-            // Reset player stats
-            playerSpeed = 200;
-            playerDamage = 1;
-            projectileSize = 16;
-            shootingRateMultiplier = 1.0;
-            
-            // Reset new perk variables
-            shieldActive = false;
-            shieldCooldownReduction = 1.0;
-            shieldUnlocked = false;
-            if (shieldVisual) {
-                shieldVisual.setVisible(false);
-                shieldVisual.setScale(1);
-                shieldVisual.setAlpha(0.4);
-            }
-            if (shieldCooldownTimer) {
-                shieldCooldownTimer.remove();
-                shieldCooldownTimer = null;
-            }
-            
-            doubleShotChance = 0;
-            doubleShotUnlocked = false;
-            slowShotChance = 0;
-            slowShotUnlocked = false;
-            
-            // Reset orbital projectile
-            orbitalProjectileUnlocked = false;
-            orbitalProjectileCooldownReduction = 1.0;
-            if (orbitalProjectileTimer) {
-                orbitalProjectileTimer.remove();
-                orbitalProjectileTimer = null;
-            }
-            if (orbitalProjectile) {
-                orbitalProjectile.destroy();
-                orbitalProjectile = null;
-                
-                // Destroy second orbital if it exists
-                if (orbitalProjectile && orbitalProjectile.secondOrbital) {
-                    orbitalProjectile.secondOrbital.destroy();
-                }
-            }
-            
-            // Update player stats text
-            updatePlayerStatsText.call(this);
-            
-            // Reset hero exp system
-            heroExp = 0;
-            heroLevel = 1;
-            expToNextLevel = 5;
-            heroLevelText.setText('Hero Level: 1');
-            
-            // Update health text and bar
-            healthText.setText(`Health: ${playerHealth}/${maxPlayerHealth}`);
-            healthBar.width = 200;
-            healthBar.x = 400;
-            healthBar.fillColor = 0x00ff00;
-            
-            // Update exp bar
-            updateExpBar.call(this);
-            
-            // Hide game over text and restart button
-            gameOverText.setVisible(false);
-            restartButton.setVisible(false);
-            
-            // Reset player position
-            player.x = 400;
-            player.y = 300;
-            player.setAlpha(1);
-            
-            // Clear existing enemies and projectiles
-            enemies.clear(true, true);
-            projectiles.clear(true, true);
-            
-            // Resume physics
-            this.physics.resume();
-            
-            // Create new enemy spawner
-            this.enemySpawner = this.time.addEvent({
-                delay: baseSpawnDelay,
-                callback: spawnEnemy,
-                callbackScope: this,
-                loop: true
-            });
-            
-            // Create new projectile firer
-            this.projectileFirer = this.time.addEvent({
-                delay: shootingDelay / shootingRateMultiplier,
-                callback: fireProjectile,
-                callbackScope: this,
-                loop: true
-            });
-            
-            // Reset difficulty scaling
-            baseEnemyHealth = 1;
-            currentEnemyHealth = 1;
-            gameStartTime = this.time.now;
+            // Update controls text based on current keyboard layout
+            updateControlsText.call(this);
         }
     </script>
 </body>
