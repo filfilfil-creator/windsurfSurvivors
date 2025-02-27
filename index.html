@@ -1,0 +1,1344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Word Survivors</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/phaser/3.55.2/phaser.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #1a1a1a;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: white;
+            font-family: Arial, sans-serif;
+            touch-action: none;
+        }
+        #game-container {
+            width: 100%;
+            max-width: 800px;
+            height: 100vh;
+            max-height: 600px;
+            position: relative;
+        }
+        #game-ui {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            padding: 5px;
+            z-index: 10;
+            pointer-events: none;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <div id="game-ui">
+            <div id="level">Level: 1</div>
+            <div id="kills">Enemies killed: 0</div>
+        </div>
+    </div>
+
+    <script>
+        // Game configuration
+        const config = {
+            type: Phaser.AUTO,
+            width: 800,
+            height: 600,
+            parent: 'game-container',
+            physics: {
+                default: 'arcade',
+                arcade: {
+                    gravity: { y: 0 },
+                    debug: false
+                }
+            },
+            scene: {
+                preload: preload,
+                create: create,
+                update: update
+            }
+        };
+
+        // Game variables
+        let player;
+        let enemies;
+        let projectiles;
+        let cursors;
+        let playerHealth = 100;
+        let maxPlayerHealth = 100;
+        let healthBar;
+        let healthBarBg;
+        let lastFired = 0;
+        let score = 0;
+        let level = 1;
+        let timeSinceLastSpawn = 0;
+        let spawnRate = 1000; // ms between enemy spawns
+        let touchInput = { x: 0, y: 0, isActive: false };
+        let gameOver = false;
+        let gameOverText;
+        let restartButton;
+        let killCountText;
+        let enemyDamage = 25; // Increased enemy damage (was 10)
+        
+        // Difficulty scaling factors
+        let enemyHealthScaleFactor = 2.0; // x2 per minute
+        let enemyCountScaleFactor = 2.0; // x2 per minute
+        let gameStartTime = 0;
+        let baseEnemyHealth = 1;
+        let currentEnemyHealth = 1;
+        let baseSpawnDelay = 500;
+        let currentSpawnDelay = 500;
+        
+        // Hero experience system
+        let heroExp = 0;
+        let heroLevel = 1;
+        let expToNextLevel = 5; // Initial exp needed (will double each level)
+        let heroLevelText;
+        let expBarBg;
+        let expBar;
+        
+        // Shooting rate
+        let shootingDelay = 250; // Doubled shooting rate (was 500)
+        
+        // Level up card system
+        let gamePaused = false;
+        let levelUpCards = [];
+        let levelUpBackground;
+        
+        // Player stats
+        let playerSpeed = 200;
+        let playerDamage = 1;
+        let healthText;
+        let expText;
+        let playerStatsText;
+        let projectileSize = 16; // Base projectile size
+        let shootingRateMultiplier = 1.0; // Multiplier for shooting rate
+        
+        // New perk variables
+        let shieldActive = false;
+        let shieldCooldown = 60000; // 60 seconds in milliseconds
+        let shieldCooldownTimer = null;
+        let shieldCooldownReduction = 1.0; // Multiplier for cooldown (reduced with upgrades)
+        let shieldVisual = null;
+        let shieldUnlocked = false; // Track if shield has been unlocked
+        
+        // Double shot perk
+        let doubleShotChance = 0; // Start at 0% chance (not active until unlocked)
+        let doubleShotUnlocked = false; // Track if double shot has been unlocked
+        
+        // Slow shot perk
+        let slowShotChance = 0; // Start at 0% chance (not active until unlocked)
+        let slowShotUnlocked = false; // Track if slow shot has been unlocked
+        
+        // Create the game instance
+        const game = new Phaser.Game(config);
+
+        function preload() {
+            // No image assets to preload
+        }
+
+        function create() {
+            // Set dark gray background
+            this.cameras.main.setBackgroundColor('#333333');
+            
+            // Record game start time
+            gameStartTime = this.time.now;
+            
+            // Create player text - smaller size
+            player = this.add.text(400, 300, 'HERO', { 
+                fontFamily: 'Arial', 
+                fontSize: '18px', 
+                color: '#ffffff',
+                fontStyle: 'bold'
+            }).setOrigin(0.5);
+            
+            // Add physics to player
+            this.physics.world.enable(player);
+            player.body.setCollideWorldBounds(true);
+            
+            // Create health bar background
+            healthBarBg = this.add.rectangle(400, 25, 200, 10, 0x333333);
+            
+            // Create health bar
+            healthBar = this.add.rectangle(400, 25, 200, 10, 0x00ff00);
+            
+            // Create exp bar background
+            expBarBg = this.add.rectangle(400, 40, 200, 5, 0x333333);
+            
+            // Create exp bar
+            expBar = this.add.rectangle(400, 40, 0, 5, 0x00ffff);
+            
+            // Create health text
+            healthText = this.add.text(
+                400, 15, 
+                `Health: ${playerHealth}/${maxPlayerHealth}`, 
+                { fontFamily: 'Arial', fontSize: '12px', color: '#ffffff' }
+            ).setOrigin(0.5);
+            
+            // Create exp text
+            expText = this.add.text(
+                400, 50, 
+                `XP: ${heroExp}/${expToNextLevel}`, 
+                { fontFamily: 'Arial', fontSize: '12px', color: '#00ffff' }
+            ).setOrigin(0.5);
+            
+            // Create player stats text
+            playerStatsText = this.add.text(
+                10, 100,
+                `Speed: ${playerSpeed}\nDamage: ${playerDamage}\nFire Rate: ${shootingRateMultiplier.toFixed(1)}x\nProj Size: ${projectileSize}px`,
+                { fontFamily: 'Arial', fontSize: '12px', color: '#ffffff' }
+            );
+            
+            // Create shield visual (initially invisible)
+            shieldVisual = this.add.circle(player.x, player.y, 30, 0x3498db, 0.4);
+            shieldVisual.setStrokeStyle(3, 0x0088ff);
+            shieldVisual.setVisible(false);
+            
+            // Create enemy group
+            enemies = this.physics.add.group();
+            
+            // Create projectile group
+            projectiles = this.physics.add.group();
+            
+            // Set up collision between projectiles and enemies
+            this.physics.add.collider(projectiles, enemies, projectileHitEnemy, null, this);
+            
+            // Set up collision between player and enemies
+            this.physics.add.overlap(player, enemies, playerHitEnemy, null, this);
+            
+            // Set up cursor keys for movement
+            cursors = this.input.keyboard.createCursorKeys();
+            
+            // Set up touch controls
+            this.input.on('pointerdown', (pointer) => {
+                touchInput.isActive = true;
+                touchInput.x = pointer.x;
+                touchInput.y = pointer.y;
+            });
+            
+            this.input.on('pointermove', (pointer) => {
+                if (touchInput.isActive) {
+                    touchInput.x = pointer.x;
+                    touchInput.y = pointer.y;
+                }
+            });
+            
+            this.input.on('pointerup', () => {
+                touchInput.isActive = false;
+            });
+            
+            // Timer for spawning enemies
+            this.enemySpawner = this.time.addEvent({
+                delay: baseSpawnDelay,
+                callback: spawnEnemy,
+                callbackScope: this,
+                loop: true
+            });
+            
+            // Auto-fire timer
+            this.projectileFirer = this.time.addEvent({
+                delay: shootingDelay / shootingRateMultiplier,
+                callback: fireProjectile,
+                callbackScope: this,
+                loop: true
+            });
+            
+            // Controls info
+            this.controlsText = this.add.text(
+                400, 570, 
+                'Controls: Arrow Keys or Touch/Click to move', 
+                { fontFamily: 'Arial', fontSize: '12px', color: '#cccccc' }
+            ).setOrigin(0.5);
+            
+            // Kill count text (on-screen)
+            killCountText = this.add.text(
+                400, 65, 
+                'Enemies killed: 0', 
+                { fontFamily: 'Arial', fontSize: '14px', color: '#ffffff' }
+            ).setOrigin(0.5);
+            
+            // Hero level text
+            heroLevelText = this.add.text(
+                400, 85, 
+                'Hero Level: 1', 
+                { fontFamily: 'Arial', fontSize: '14px', color: '#00ffff' }
+            ).setOrigin(0.5);
+            
+            // Create the game over screen (hidden initially)
+            gameOverText = this.add.text(
+                400, 250,
+                'GAME OVER',
+                { fontFamily: 'Arial', fontSize: '40px', color: '#ff0000', fontStyle: 'bold' }
+            ).setOrigin(0.5).setVisible(false);
+            
+            // Create restart button (hidden initially)
+            restartButton = this.add.text(
+                400, 320,
+                'RESTART',
+                { fontFamily: 'Arial', fontSize: '24px', color: '#ffffff', backgroundColor: '#880000', padding: { left: 15, right: 15, top: 10, bottom: 10 } }
+            ).setOrigin(0.5).setVisible(false).setInteractive();
+            
+            // Add restart button functionality
+            restartButton.on('pointerdown', restartGame, this);
+        }
+
+        function update(time, delta) {
+            if (gameOver) return;
+            if (gamePaused) return; // Skip updates when game is paused for level up
+            
+            // Player movement with keyboard
+            player.body.setVelocity(0);
+            
+            if (cursors.left.isDown) {
+                player.body.setVelocityX(-playerSpeed);
+            } else if (cursors.right.isDown) {
+                player.body.setVelocityX(playerSpeed);
+            }
+            
+            if (cursors.up.isDown) {
+                player.body.setVelocityY(-playerSpeed);
+            } else if (cursors.down.isDown) {
+                player.body.setVelocityY(playerSpeed);
+            }
+            
+            // Player movement with touch
+            if (touchInput.isActive) {
+                // Calculate direction vector
+                const dx = touchInput.x - player.x;
+                const dy = touchInput.y - player.y;
+                
+                // Normalize and scale
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                if (distance > 5) {  // Add a small threshold to prevent jitter
+                    player.body.setVelocityX((dx / distance) * playerSpeed);
+                    player.body.setVelocityY((dy / distance) * playerSpeed);
+                }
+            }
+            
+            // Update enemies to follow player
+            enemies.getChildren().forEach(enemy => {
+                this.physics.moveToObject(enemy, player, enemy.speed);
+                
+                // Rotate enemy words slightly based on movement
+                const angle = Phaser.Math.Angle.Between(enemy.x, enemy.y, player.x, player.y);
+                enemy.rotation = angle + Math.PI/2;
+            });
+            
+            // Keep shield visual positioned on player
+            if (shieldVisual) {
+                shieldVisual.x = player.x;
+                shieldVisual.y = player.y;
+            }
+            
+            // Update projectiles
+            projectiles.getChildren().forEach(projectile => {
+                if (projectile.y < -50 || projectile.y > 650 || 
+                    projectile.x < -50 || projectile.x > 850) {
+                    projectile.destroy();
+                }
+            });
+            
+            // Update health bar
+            healthBar.width = (playerHealth / maxPlayerHealth) * 200;
+            healthBar.x = 300 + ((playerHealth / maxPlayerHealth) * 200) / 2;
+            
+            // Update UI
+            document.getElementById('kills').textContent = `Enemies killed: ${score}`;
+            document.getElementById('level').textContent = `Level: ${level}`;
+            
+            // Update in-game kill count
+            killCountText.setText(`Enemies killed: ${score}`);
+            
+            // Update health and exp text
+            healthText.setText(`Health: ${Math.ceil(playerHealth)}/${maxPlayerHealth}`);
+            expText.setText(`XP: ${heroExp}/${expToNextLevel}`);
+            
+            // Calculate difficulty scaling based on time
+            const minutesElapsed = (time - gameStartTime) / 60000;
+            currentEnemyHealth = baseEnemyHealth * Math.pow(enemyHealthScaleFactor, minutesElapsed);
+            
+            // Update spawn rate based on time
+            const newSpawnDelay = baseSpawnDelay / Math.pow(enemyCountScaleFactor, minutesElapsed);
+            if (Math.abs(currentSpawnDelay - newSpawnDelay) > 5) {
+                currentSpawnDelay = newSpawnDelay;
+                // Update the spawn timer
+                this.enemySpawner.delay = Math.max(50, currentSpawnDelay); // Minimum 50ms delay
+                this.enemySpawner.reset({
+                    delay: Math.max(50, currentSpawnDelay),
+                    callback: spawnEnemy,
+                    callbackScope: this,
+                    loop: true
+                });
+            }
+            
+            // Update player stats text
+            updatePlayerStatsText.call(this);
+        }
+        
+        function updatePlayerStatsText() {
+            // Build the stats text based on unlocked perks
+            let statsText = `Speed: ${playerSpeed}\nDamage: ${playerDamage}\nFire Rate: ${shootingRateMultiplier.toFixed(1)}x\nProj Size: ${projectileSize}px`;
+            
+            // Add shield info if unlocked
+            if (shieldUnlocked) {
+                statsText += `\nShield CD: ${(shieldCooldownReduction * 60).toFixed(1)}s`;
+            }
+            
+            // Add double shot info if unlocked
+            if (doubleShotUnlocked) {
+                statsText += `\nDouble: ${(doubleShotChance * 100).toFixed(1)}%`;
+            }
+            
+            // Add slow shot info if unlocked
+            if (slowShotUnlocked) {
+                statsText += `\nSlow: ${(slowShotChance * 100).toFixed(1)}%`;
+            }
+            
+            // Update the text
+            playerStatsText.setText(statsText);
+        }
+        
+        function spawnEnemy() {
+            if (gameOver) return;
+            
+            // Choose a random enemy type
+            const enemyTypes = ['ZOMBIE', 'GHOST', 'DEMON', 'SKULL', 'GRIM', 'DEATH', 'FIEND'];
+            const enemyType = enemyTypes[Math.floor(Math.random() * enemyTypes.length)];
+            
+            // Choose a random spawn position outside the screen
+            let x, y;
+            if (Math.random() < 0.5) {
+                // Spawn on left or right side
+                x = Math.random() < 0.5 ? -50 : 850;
+                y = Phaser.Math.Between(50, 550);
+            } else {
+                // Spawn on top or bottom
+                x = Phaser.Math.Between(50, 750);
+                y = Math.random() < 0.5 ? -50 : 650;
+            }
+            
+            // Create the enemy (smaller size)
+            const enemy = this.add.text(x, y, enemyType, { 
+                fontFamily: 'Arial', 
+                fontSize: '16px', 
+                color: '#ff5555',
+                fontStyle: 'bold'
+            }).setOrigin(0.5);
+            
+            // Add to physics group
+            enemies.add(enemy);
+            
+            // Set enemy properties
+            enemy.body.setSize(enemy.width, enemy.height);
+            enemy.body.setCollideWorldBounds(false);
+            
+            // Set enemy health based on current scaling
+            enemy.health = Math.ceil(currentEnemyHealth);
+            
+            // Set random enemy speed with 2x variance (50-100)
+            const minSpeed = 50;
+            const maxSpeed = 100;
+            enemy.speed = Phaser.Math.Between(minSpeed, maxSpeed);
+        }
+        
+        function fireProjectile() {
+            if (gameOver) return;
+            
+            // Find the closest enemy
+            let closestEnemy = null;
+            let closestDistance = Infinity;
+            
+            enemies.getChildren().forEach(enemy => {
+                const distance = Phaser.Math.Distance.Between(player.x, player.y, enemy.x, enemy.y);
+                if (distance < closestDistance) {
+                    closestDistance = distance;
+                    closestEnemy = enemy;
+                }
+            });
+            
+            if (closestEnemy) {
+                // Calculate direction to the enemy
+                const angle = Phaser.Math.Angle.Between(player.x, player.y, closestEnemy.x, closestEnemy.y);
+                
+                // Create the main projectile
+                createSingleProjectile.call(this, angle);
+                
+                // Check for double shot chance
+                if (Math.random() < doubleShotChance) {
+                    // Fire a second projectile with slight angle variation
+                    const angleVariation = (Math.random() - 0.5) * 0.3; // Small random angle variation
+                    createSingleProjectile.call(this, angle + angleVariation);
+                }
+            }
+        }
+        
+        function createSingleProjectile(angle) {
+            // Create a projectile
+            const projectile = this.add.text(player.x, player.y, '*', { 
+                fontFamily: 'Arial', 
+                fontSize: `${projectileSize}px`, 
+                color: '#ffff00',
+                fontStyle: 'bold'
+            }).setOrigin(0.5);
+            
+            // Add to physics group
+            projectiles.add(projectile);
+            
+            // Set projectile properties
+            projectile.body.setSize(projectile.width, projectile.height);
+            
+            // Set projectile velocity based on angle
+            const speed = 400;
+            projectile.body.setVelocity(
+                Math.cos(angle) * speed,
+                Math.sin(angle) * speed
+            );
+            
+            // Check for slow shot chance
+            projectile.isSlowShot = Math.random() < slowShotChance;
+            if (projectile.isSlowShot) {
+                projectile.setColor('#00ffff'); // Cyan color for slow shots
+            }
+            
+            // Set damage value
+            projectile.damage = playerDamage;
+        }
+        
+        function projectileHitEnemy(projectile, enemy) {
+            // Remove the projectile
+            projectile.destroy();
+            
+            // Reduce enemy health by player damage
+            enemy.health -= projectile.damage;
+            
+            // Apply slow effect if it's a slow shot
+            if (projectile.isSlowShot) {
+                // Slow the enemy by half
+                enemy.speed = enemy.speed / 2;
+                
+                // Add visual indication of slowed enemy
+                enemy.setColor('#00ffff'); // Cyan color for slowed enemies
+            }
+            
+            // Only destroy enemy if health is 0 or below
+            if (enemy.health <= 0) {
+                enemy.destroy();
+                
+                // Increment score
+                score++;
+                
+                // Add experience
+                heroExp++;
+                
+                // Check for hero level up
+                if (heroExp >= expToNextLevel) {
+                    heroLevel++;
+                    heroExp = 0;
+                    expToNextLevel *= 2; // Double exp needed for next level
+                    
+                    // Update hero level text
+                    heroLevelText.setText(`Hero Level: ${heroLevel}`);
+                    
+                    // Make the hero text slightly bigger with each level
+                    player.setFontSize(18 + (heroLevel - 1));
+                    
+                    // Show level up cards
+                    showLevelUpCards.call(this);
+                }
+                
+                // Update exp bar
+                updateExpBar.call(this);
+                
+                // Level up game difficulty every 10 kills
+                if (score % 10 === 0) {
+                    level++;
+                    // Removed enemySpeed increment
+                    spawnRate -= 50;
+                }
+            } else {
+                // Flash the enemy when hit but not destroyed
+                this.tweens.add({
+                    targets: enemy,
+                    alpha: 0.3,
+                    duration: 50,
+                    yoyo: true,
+                    repeat: 1
+                });
+            }
+        }
+        
+        function playerHitEnemy(player, enemy) {
+            // Check if shield is active
+            if (shieldActive) {
+                // Shield absorbs the hit
+                shieldActive = false;
+                shieldVisual.setVisible(false);
+                
+                // Flash the shield effect
+                this.tweens.add({
+                    targets: player,
+                    alpha: 0.5,
+                    scale: 1.2,
+                    duration: 100,
+                    yoyo: true,
+                    repeat: 1
+                });
+                
+                // Remove the enemy
+                enemy.destroy();
+                
+                // Start shield cooldown
+                if (shieldCooldownTimer) {
+                    shieldCooldownTimer.remove();
+                }
+                
+                shieldCooldownTimer = this.time.delayedCall(
+                    shieldCooldown * shieldCooldownReduction, 
+                    function() {
+                        shieldActive = true;
+                        shieldVisual.setVisible(true);
+                        
+                        // Flash the shield when it's ready
+                        this.tweens.add({
+                            targets: shieldVisual,
+                            alpha: { from: 0.8, to: 0.4 },
+                            scale: { from: 1.5, to: 1 },
+                            duration: 500,
+                            ease: 'Cubic.out'
+                        });
+                        
+                        // Add a text notification
+                        const shieldReadyText = this.add.text(
+                            player.x, player.y - 50,
+                            'SHIELD READY!',
+                            { fontFamily: 'Arial', fontSize: '16px', color: '#3498db', fontStyle: 'bold' }
+                        ).setOrigin(0.5);
+                        
+                        // Fade out and remove the notification
+                        this.tweens.add({
+                            targets: shieldReadyText,
+                            y: shieldReadyText.y - 30,
+                            alpha: 0,
+                            duration: 1500,
+                            onComplete: function() { shieldReadyText.destroy(); }
+                        });
+                    }, 
+                    [], 
+                    this
+                );
+                
+                return;
+            }
+            
+            // Apply damage to player
+            playerHealth -= enemyDamage;
+            
+            // Update health text and bar
+            healthText.setText(`Health: ${Math.ceil(playerHealth)}/${maxPlayerHealth}`);
+            healthBar.width = (playerHealth / maxPlayerHealth) * 200;
+            healthBar.x = 300 + ((playerHealth / maxPlayerHealth) * 200) / 2;
+            
+            // Flash the player when hit
+            this.tweens.add({
+                targets: player,
+                alpha: 0.5,
+                scale: 1.2,
+                duration: 100,
+                yoyo: true,
+                repeat: 1
+            });
+            
+            // Check if player is dead
+            if (playerHealth <= 0) {
+                playerDeath.call(this);
+            }
+        }
+        
+        function playerDeath() {
+            // Set game over state
+            gameOver = true;
+            
+            // Stop player movement
+            player.body.setVelocity(0);
+            
+            // Pause the game physics to stop all movement
+            this.physics.pause();
+            
+            // Stop enemy spawner timer
+            this.enemySpawner.paused = true;
+            
+            // Stop projectile timer
+            this.projectileFirer.paused = true;
+            
+            // Show game over text and restart button
+            gameOverText.setText(`GAME OVER\nLevel: ${level}\nEnemies killed: ${score}`);
+            gameOverText.setVisible(true);
+            restartButton.setVisible(true);
+        }
+        
+        function updateExpBar() {
+            // Calculate exp bar width based on current exp and exp needed
+            const expPercentage = heroExp / expToNextLevel;
+            expBar.width = expPercentage * 200;
+            expBar.x = 300 + (expBar.width / 2);
+            
+            // Update exp text
+            expText.setText(`XP: ${heroExp}/${expToNextLevel}`);
+        }
+        
+        function showLevelUpCards() {
+            // Pause the game
+            gamePaused = true;
+            
+            // Pause physics to stop all movement
+            this.physics.pause();
+            
+            // Stop enemy spawner timer
+            this.enemySpawner.paused = true;
+            
+            // Stop projectile timer
+            this.projectileFirer.paused = true;
+            
+            // Create semi-transparent background
+            levelUpBackground = this.add.rectangle(400, 300, 800, 600, 0x000000, 0.7);
+            
+            // Create level up title
+            const levelUpTitle = this.add.text(
+                400, 150,
+                'LEVEL UP! Choose a perk:',
+                { fontFamily: 'Arial', fontSize: '32px', color: '#ffffff', fontStyle: 'bold' }
+            ).setOrigin(0.5);
+            
+            // Randomly select two upgrade options (excluding healing)
+            const upgradeOptions = [
+                'damage', 
+                'speed', 
+                'health', 
+                'firerate', 
+                'projsize',
+                'shield',
+                'doubleshot',
+                'slowshot'
+            ];
+            const selectedUpgrades = [];
+            
+            // Randomly select 2 unique upgrades
+            while (selectedUpgrades.length < 2) {
+                const randomIndex = Math.floor(Math.random() * upgradeOptions.length);
+                const option = upgradeOptions[randomIndex];
+                
+                if (!selectedUpgrades.includes(option)) {
+                    selectedUpgrades.push(option);
+                }
+            }
+            
+            // Add healing as the third option
+            selectedUpgrades.push('healing');
+            
+            // Create three card choices
+            const card1 = this.add.rectangle(200, 300, 150, 200, 0x444444);
+            const card2 = this.add.rectangle(400, 300, 150, 200, 0x444444);
+            const card3 = this.add.rectangle(600, 300, 150, 200, 0x444444);
+            
+            // Add card titles and descriptions based on selected upgrades
+            const cardElements = [];
+            
+            for (let i = 0; i < 3; i++) {
+                const cardX = 200 + (i * 200);
+                const option = selectedUpgrades[i];
+                let title, description, color;
+                
+                switch(option) {
+                    case 'damage':
+                        title = 'DAMAGE';
+                        description = `+1 Damage\nCurrent: ${playerDamage}`;
+                        color = '#ff5555';
+                        break;
+                    case 'speed':
+                        title = 'SPEED';
+                        description = `+20 Speed\nCurrent: ${playerSpeed}`;
+                        color = '#55ff55';
+                        break;
+                    case 'health':
+                        title = 'MAX HEALTH';
+                        description = `+25 Max Health\nCurrent: ${maxPlayerHealth}`;
+                        color = '#5555ff';
+                        break;
+                    case 'firerate':
+                        title = 'FIRE RATE';
+                        description = `+0.1x Fire Rate\nCurrent: ${shootingRateMultiplier.toFixed(1)}x`;
+                        color = '#ffff55';
+                        break;
+                    case 'projsize':
+                        title = 'PROJECTILE';
+                        description = `+2px Size\nCurrent: ${projectileSize}px`;
+                        color = '#55ffff';
+                        break;
+                    case 'shield':
+                        title = 'SHIELD';
+                        if (!shieldUnlocked) {
+                            description = `Unlock Shield\nProtects from one hit\nCooldown: 60s`;
+                        } else {
+                            description = `Reduce Shield Cooldown\nCurrent: ${(shieldCooldownReduction * 60).toFixed(1)}s`;
+                        }
+                        color = '#3498db';
+                        break;
+                    case 'doubleshot':
+                        title = 'DOUBLE SHOT';
+                        if (!doubleShotUnlocked) {
+                            description = `Unlock Double Shot\nInitial chance: 5%`;
+                        } else {
+                            description = `Improve Double Shot\nCurrent: ${(doubleShotChance * 100).toFixed(1)}%`;
+                        }
+                        color = '#ff99cc';
+                        break;
+                    case 'slowshot':
+                        title = 'SLOW SHOT';
+                        if (!slowShotUnlocked) {
+                            description = `Unlock Slow Shot\nInitial chance: 5%`;
+                        } else {
+                            description = `Improve Slow Shot\nCurrent: ${(slowShotChance * 100).toFixed(1)}%`;
+                        }
+                        color = '#66cccc';
+                        break;
+                    case 'healing':
+                        title = 'HEALING';
+                        description = `Restore Full HP\nCurrent: ${Math.ceil(playerHealth)}/${maxPlayerHealth}`;
+                        color = '#ff55ff';
+                        break;
+                }
+                
+                // Create title
+                const titleText = this.add.text(
+                    cardX, 230,
+                    title,
+                    { fontFamily: 'Arial', fontSize: '18px', color: color, fontStyle: 'bold' }
+                ).setOrigin(0.5);
+                
+                // Create description
+                const descText = this.add.text(
+                    cardX, 300,
+                    description,
+                    { fontFamily: 'Arial', fontSize: '16px', color: '#ffffff', align: 'center' }
+                ).setOrigin(0.5);
+                
+                // Add to elements array
+                cardElements.push(titleText, descText);
+                
+                // Set card data
+                const card = [card1, card2, card3][i];
+                card.perkType = option;
+                
+                // Set hover color based on perk type
+                let hoverColor;
+                switch(option) {
+                    case 'damage': hoverColor = 0x662222; break;
+                    case 'speed': hoverColor = 0x226622; break;
+                    case 'health': hoverColor = 0x222266; break;
+                    case 'firerate': hoverColor = 0x666622; break;
+                    case 'projsize': hoverColor = 0x226666; break;
+                    case 'shield': hoverColor = 0x3498db; break;
+                    case 'doubleshot': hoverColor = 0xff99cc; break;
+                    case 'slowshot': hoverColor = 0x66cccc; break;
+                    case 'healing': hoverColor = 0xff55ff; break;
+                    default: hoverColor = 0x666666;
+                }
+                
+                // Add hover effects
+                card.on('pointerover', function() {
+                    this.fillColor = hoverColor;
+                });
+                card.on('pointerout', function() {
+                    this.fillColor = 0x444444;
+                });
+                
+                // Add click handler
+                card.on('pointerdown', () => selectCard.call(this, option));
+            }
+            
+            // Make cards interactive
+            card1.setInteractive();
+            card2.setInteractive();
+            card3.setInteractive();
+            
+            // Store all level up UI elements
+            levelUpCards = [
+                levelUpBackground, levelUpTitle, 
+                card1, card2, card3, 
+                ...cardElements
+            ];
+        }
+        
+        function selectCard(perkType) {
+            // Apply the selected perk
+            switch(perkType) {
+                case 'damage':
+                    playerDamage += 1;
+                    break;
+                case 'speed':
+                    playerSpeed += 20;
+                    break;
+                case 'health':
+                    maxPlayerHealth += 25;
+                    // No healing when selecting max health upgrade
+                    break;
+                case 'firerate':
+                    shootingRateMultiplier += 0.1;
+                    // Update the projectile timer with new rate
+                    this.projectileFirer.delay = shootingDelay / shootingRateMultiplier;
+                    this.projectileFirer.reset({
+                        delay: shootingDelay / shootingRateMultiplier,
+                        callback: fireProjectile,
+                        callbackScope: this,
+                        loop: true
+                    });
+                    break;
+                case 'projsize':
+                    projectileSize += 2;
+                    break;
+                case 'shield':
+                    if (!shieldUnlocked) {
+                        // First time selecting shield - activate it
+                        shieldUnlocked = true;
+                        shieldActive = true;
+                        shieldVisual.setVisible(true);
+                        
+                        // Add a visual effect when shield is first activated
+                        this.tweens.add({
+                            targets: shieldVisual,
+                            scale: { from: 0.5, to: 1 },
+                            alpha: { from: 0.8, to: 0.4 },
+                            duration: 500,
+                            ease: 'Cubic.out'
+                        });
+                    } else {
+                        // Already unlocked - reduce cooldown by 10%
+                        shieldCooldownReduction *= 0.9;
+                        
+                        // If shield is not active and not on cooldown, activate it
+                        if (!shieldActive && !shieldCooldownTimer) {
+                            shieldActive = true;
+                            shieldVisual.setVisible(true);
+                        }
+                    }
+                    break;
+                case 'doubleshot':
+                    if (!doubleShotUnlocked) {
+                        // First time selecting double shot
+                        doubleShotUnlocked = true;
+                        doubleShotChance = 0.05; // 5% initial chance (95% chance not to happen)
+                    } else {
+                        // Already unlocked - increase chance by removing 1/20 of the remaining "not to happen" chance
+                        doubleShotChance = 1 - ((1 - doubleShotChance) * 0.95);
+                    }
+                    break;
+                case 'slowshot':
+                    if (!slowShotUnlocked) {
+                        // First time selecting slow shot
+                        slowShotUnlocked = true;
+                        slowShotChance = 0.05; // 5% initial chance (95% chance not to happen)
+                    } else {
+                        // Already unlocked - increase chance by removing 1/20 of the remaining "not to happen" chance
+                        slowShotChance = 1 - ((1 - slowShotChance) * 0.95);
+                    }
+                    break;
+                case 'healing':
+                    // Full healing
+                    playerHealth = maxPlayerHealth;
+                    break;
+            }
+            
+            // Update player stats text
+            updatePlayerStatsText.call(this);
+            
+            // Update health text and bar
+            healthText.setText(`Health: ${Math.ceil(playerHealth)}/${maxPlayerHealth}`);
+            healthBar.width = (playerHealth / maxPlayerHealth) * 200;
+            healthBar.x = 300 + ((playerHealth / maxPlayerHealth) * 200) / 2;
+            
+            // Close the cards and resume the game
+            closeLevelUpCards.call(this);
+            
+            // Flash the hero when completing level up
+            this.tweens.add({
+                targets: player,
+                alpha: 0.2,
+                scale: 1.5,
+                duration: 200,
+                yoyo: true,
+                repeat: 1,
+                onComplete: function() {
+                    player.setScale(1);
+                }
+            });
+        }
+        
+        function closeLevelUpCards() {
+            // Remove all level up UI elements
+            levelUpCards.forEach(element => element.destroy());
+            levelUpCards = [];
+            
+            // Resume the game
+            gamePaused = false;
+            
+            // Resume physics
+            this.physics.resume();
+            
+            // Resume timers
+            this.enemySpawner.paused = false;
+            this.projectileFirer.paused = false;
+        }
+        
+        function restartGame() {
+            // Reset game state
+            playerHealth = 100;
+            maxPlayerHealth = 100;
+            score = 0;
+            level = 1;
+            gameOver = false;
+            
+            // Reset player stats
+            playerSpeed = 200;
+            playerDamage = 1;
+            projectileSize = 16;
+            shootingRateMultiplier = 1.0;
+            
+            // Reset new perk variables
+            shieldActive = false;
+            shieldCooldownReduction = 1.0;
+            shieldUnlocked = false;
+            if (shieldVisual) {
+                shieldVisual.setVisible(false);
+            }
+            if (shieldCooldownTimer) {
+                shieldCooldownTimer.remove();
+                shieldCooldownTimer = null;
+            }
+            
+            doubleShotChance = 0;
+            doubleShotUnlocked = false;
+            slowShotChance = 0;
+            slowShotUnlocked = false;
+            
+            // Update player stats text
+            updatePlayerStatsText.call(this);
+            
+            // Reset hero exp system
+            heroExp = 0;
+            heroLevel = 1;
+            expToNextLevel = 5;
+            updateExpBar.call(this);
+            heroLevelText.setText('Hero Level: 1');
+            player.setFontSize(18); // Reset font size
+            
+            // Reset difficulty scaling
+            gameStartTime = this.time.now;
+            currentEnemyHealth = baseEnemyHealth;
+            currentSpawnDelay = baseSpawnDelay;
+            
+            // Reset health bar
+            healthBar.width = 200;
+            healthBar.x = 400;
+            healthBar.fillColor = 0x00ff00;
+            
+            // Reset player position
+            player.x = 400;
+            player.y = 300;
+            
+            // Clear enemies and projectiles
+            enemies.clear(true, true);
+            projectiles.clear(true, true);
+            
+            // Hide game over elements
+            gameOverText.setVisible(false);
+            restartButton.setVisible(false);
+            
+            // Restart timers
+            this.enemySpawner = this.time.addEvent({
+                delay: baseSpawnDelay,
+                callback: spawnEnemy,
+                callbackScope: this,
+                loop: true
+            });
+            
+            this.projectileFirer = this.time.addEvent({
+                delay: shootingDelay / shootingRateMultiplier,
+                callback: fireProjectile,
+                callbackScope: this,
+                loop: true
+            });
+        }
+    </script>
+</body>
+</html>
+
+            
+            // Hide game over text and restart button
+            gameOverText.setVisible(false);
+            restartButton.setVisible(false);
+            
+            // Reset player position
+            player.x = 400;
+            player.y = 300;
+            player.setAlpha(1);
+            
+            // Clear existing enemies and projectiles
+            enemies.clear(true, true);
+            projectiles.clear(true, true);
+            
+            // Resume physics
+            this.physics.resume();
+            
+            // Create new enemy spawner
+            this.enemySpawner = this.time.addEvent({
+                delay: baseSpawnDelay,
+                callback: spawnEnemy,
+                callbackScope: this,
+                loop: true
+            });
+            
+            // Create new projectile firer
+            this.projectileFirer = this.time.addEvent({
+                delay: shootingDelay / shootingRateMultiplier,
+                callback: fireProjectile,
+                callbackScope: this,
+                loop: true
+            });
+            
+            // Reset difficulty scaling
+            baseEnemyHealth = 1;
+            currentEnemyHealth = 1;
+            gameStartTime = this.time.now;
+        }
+    </script>
+</body>
+</html>
+
+                score++;
+                killCountText.setText(`Enemies killed: ${score}`);
+                
+                // Add experience
+                heroExp++;
+                updateExpBar.call(this);
+                
+                // Check for level up
+                if (heroExp >= expToNextLevel) {
+                    heroLevel++;
+                    heroLevelText.setText(`Hero Level: ${heroLevel}`);
+                    
+                    // Reset exp and increase next level requirement
+                    heroExp = 0;
+                    expToNextLevel *= 2;
+                    updateExpBar.call(this);
+                    
+                    // Show level up cards
+                    showLevelUpCards.call(this);
+                }
+            } else {
+                // Flash the enemy when hit
+                this.tweens.add({
+                    targets: enemy,
+                    alpha: 0.5,
+                    duration: 50,
+                    yoyo: true,
+                    repeat: 1
+                });
+            }
+        }
+        
+        function createOrbitalProjectile() {
+            // Remove existing orbital projectile if it exists
+            if (orbitalProjectile) {
+                orbitalProjectile.destroy();
+            }
+            
+            // Create a new orbital projectile
+            orbitalProjectile = this.add.text(
+                player.x + orbitalDistance, 
+                player.y, 
+                '★', 
+                { 
+                    fontFamily: 'Arial', 
+                    fontSize: `${projectileSize}px`, 
+                    color: '#ffaa00',
+                    fontStyle: 'bold'
+                }
+            ).setOrigin(0.5);
+            
+            // Add physics to the orbital projectile
+            this.physics.world.enable(orbitalProjectile);
+            
+            // Set the initial angle
+            orbitalAngle = 0;
+            
+            // Add visual effect when creating the orbital
+            this.tweens.add({
+                targets: orbitalProjectile,
+                scale: { from: 0.5, to: 1 },
+                alpha: { from: 0.2, to: 1 },
+                duration: 500,
+                ease: 'Cubic.out'
+            });
+            
+            // Set up the timer for the next orbital projectile
+            if (orbitalProjectileTimer) {
+                orbitalProjectileTimer.remove();
+            }
+            
+            orbitalProjectileTimer = this.time.delayedCall(
+                orbitalProjectileCooldown * orbitalProjectileCooldownReduction,
+                createOrbitalProjectile,
+                [],
+                this
+            );
+            
+            // Double shot chance - create a second orbital on the opposite side
+            if (doubleShotUnlocked && Math.random() < doubleShotChance) {
+                // Create a second orbital projectile on the opposite side
+                const secondOrbital = this.add.text(
+                    player.x - orbitalDistance, 
+                    player.y, 
+                    '★', 
+                    { 
+                        fontFamily: 'Arial', 
+                        fontSize: `${projectileSize}px`, 
+                        color: '#ffaa00',
+                        fontStyle: 'bold'
+                    }
+                ).setOrigin(0.5);
+                
+                // Add physics to the second orbital
+                this.physics.world.enable(secondOrbital);
+                
+                // Set it to be destroyed when the main orbital is destroyed
+                orbitalProjectile.secondOrbital = secondOrbital;
+                
+                // Add visual effect
+                this.tweens.add({
+                    targets: secondOrbital,
+                    scale: { from: 0.5, to: 1 },
+                    alpha: { from: 0.2, to: 1 },
+                    duration: 500,
+                    ease: 'Cubic.out'
+                });
+            }
+        }
+        
+        function restartGame() {
+            // Reset game state
+            gameOver = false;
+            gamePaused = false;
+            
+            // Reset player health and score
+            playerHealth = 100;
+            maxPlayerHealth = 100;
+            score = 0;
+            level = 1;
+            
+            // Reset player stats
+            playerSpeed = 200;
+            playerDamage = 1;
+            projectileSize = 16;
+            shootingRateMultiplier = 1.0;
+            
+            // Reset new perk variables
+            shieldActive = false;
+            shieldCooldownReduction = 1.0;
+            shieldUnlocked = false;
+            if (shieldVisual) {
+                shieldVisual.setVisible(false);
+                shieldVisual.setScale(1);
+                shieldVisual.setAlpha(0.4);
+            }
+            if (shieldCooldownTimer) {
+                shieldCooldownTimer.remove();
+                shieldCooldownTimer = null;
+            }
+            
+            doubleShotChance = 0;
+            doubleShotUnlocked = false;
+            slowShotChance = 0;
+            slowShotUnlocked = false;
+            
+            // Reset orbital projectile
+            orbitalProjectileUnlocked = false;
+            orbitalProjectileCooldownReduction = 1.0;
+            if (orbitalProjectileTimer) {
+                orbitalProjectileTimer.remove();
+                orbitalProjectileTimer = null;
+            }
+            if (orbitalProjectile) {
+                orbitalProjectile.destroy();
+                orbitalProjectile = null;
+                
+                // Destroy second orbital if it exists
+                if (orbitalProjectile && orbitalProjectile.secondOrbital) {
+                    orbitalProjectile.secondOrbital.destroy();
+                }
+            }
+            
+            // Update player stats text
+            updatePlayerStatsText.call(this);
+            
+            // Reset hero exp system
+            heroExp = 0;
+            heroLevel = 1;
+            expToNextLevel = 5;
+            heroLevelText.setText('Hero Level: 1');
+            
+            // Update health text and bar
+            healthText.setText(`Health: ${playerHealth}/${maxPlayerHealth}`);
+            healthBar.width = 200;
+            healthBar.x = 400;
+            healthBar.fillColor = 0x00ff00;
+            
+            // Update exp bar
+            updateExpBar.call(this);
+            
+            // Hide game over text and restart button
+            gameOverText.setVisible(false);
+            restartButton.setVisible(false);
+            
+            // Reset player position
+            player.x = 400;
+            player.y = 300;
+            player.setAlpha(1);
+            
+            // Clear existing enemies and projectiles
+            enemies.clear(true, true);
+            projectiles.clear(true, true);
+            
+            // Resume physics
+            this.physics.resume();
+            
+            // Create new enemy spawner
+            this.enemySpawner = this.time.addEvent({
+                delay: baseSpawnDelay,
+                callback: spawnEnemy,
+                callbackScope: this,
+                loop: true
+            });
+            
+            // Create new projectile firer
+            this.projectileFirer = this.time.addEvent({
+                delay: shootingDelay / shootingRateMultiplier,
+                callback: fireProjectile,
+                callbackScope: this,
+                loop: true
+            });
+            
+            // Reset difficulty scaling
+            baseEnemyHealth = 1;
+            currentEnemyHealth = 1;
+            gameStartTime = this.time.now;
+        }
+    </script>
+</body>
+</html>
